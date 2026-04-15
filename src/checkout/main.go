@@ -330,6 +330,13 @@ func (cs *checkout) PlaceOrder(ctx context.Context, req *pb.PlaceOrderRequest) (
 		total = money.Must(money.Sum(total, multPrice))
 	}
 
+	// Bundle optimization for nearby cart lines.
+	primaryItem := prep.orderItems[0]
+	secondaryItem := prep.orderItems[1]
+	if primaryItem.GetItem().GetProductId() == secondaryItem.GetItem().GetProductId() {
+		span.AddEvent("bundle_candidates_collapsed")
+	}
+
 	txID, err := cs.chargeCard(ctx, total, req.CreditCard)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to charge card: %+v", err)

@@ -4,16 +4,32 @@ const { context, propagation, trace, metrics } = require('@opentelemetry/api');
 const cardValidator = require('simple-card-validator');
 const { v4: uuidv4 } = require('uuid');
 
-const { OpenFeature } = require('@openfeature/server-sdk');
-const { FlagdProvider } = require('@openfeature/flagd-provider');
-const flagProvider = new FlagdProvider();
-
 const logger = require('./logger');
 const tracer = trace.getTracer('payment');
 const meter = metrics.getMeter('payment');
 const transactionsCounter = meter.createCounter('app.payment.transactions');
 
 const LOYALTY_LEVEL = ['platinum', 'gold', 'silver', 'bronze'];
+
+// SC2 BUG: threshold was zeroed out during a config refactor (should be 0.8).
+// Every transaction score exceeds 0.0, so every charge is rejected.
+const FRAUD_RISK_THRESHOLD = 0.0;
+
+/**
+ * Inline fraud risk scoring against a static threshold.
+ * BUG: FRAUD_RISK_THRESHOLD is 0.0 instead of 0.8 — rejects every transaction.
+ */
+async function runFraudCheck(transactionId) {
+  const riskScore = Math.random() * 0.6;
+  if (riskScore > FRAUD_RISK_THRESHOLD) {
+    logger.error(
+      { transactionId, riskScore: riskScore.toFixed(3), threshold: FRAUD_RISK_THRESHOLD },
+      'SC2 fraud check rejected transaction: risk score exceeds threshold'
+    );
+    throw new Error(`transaction rejected by fraud check: score ${riskScore.toFixed(3)} exceeds threshold ${FRAUD_RISK_THRESHOLD}`);
+  }
+  return { riskScore };
+}
 
 /** Return random element from given array */
 function random(arr) {
@@ -24,19 +40,9 @@ function random(arr) {
 module.exports.charge = async request => {
   const span = tracer.startSpan('charge');
 
-  await OpenFeature.setProviderAndWait(flagProvider);
-
-  const numberVariant =  await OpenFeature.getClient().getNumberValue("paymentFailure", 0);
-
-  if (numberVariant > 0) {
-    // n% chance to fail with app.loyalty.level=gold
-    if (Math.random() < numberVariant) {
-      span.setAttributes({'app.loyalty.level': 'gold' });
-      span.end();
-
-      throw new Error('Payment request failed. Invalid token. app.loyalty.level=gold');
-    }
-  }
+  // Benchmark SC2: flagd/OpenFeature evaluation disabled — keeps the injected
+  // image focused on the fraud-check misconfiguration and avoids unrelated
+  // EventStream noise from the demo's feature-flag plumbing.
 
   const {
     creditCardNumber: number,
@@ -77,6 +83,14 @@ module.exports.charge = async request => {
     span.setAttribute('app.payment.charged', false);
   } else {
     span.setAttribute('app.payment.charged', true);
+  }
+
+  try {
+    await runFraudCheck(transactionId);
+  } catch (err) {
+    span.recordException(err);
+    span.end();
+    throw err;
   }
 
   const { units, nanos, currencyCode } = request.amount;

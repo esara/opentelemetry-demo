@@ -23,6 +23,12 @@ ARG RUNNER_IMAGE="docker.io/debian:${DEBIAN_VERSION}"
 
 FROM ${BUILDER_IMAGE} AS builder
 
+# Headless build (no TTY) + QEMU cross-build: JIT needs +JPperf true or BEAM often crashes.
+ENV MIX_NO_TTY=1 \
+    CI=true \
+    ERL_FLAGS="+JPperf true" \
+    ERL_AFLAGS="-noshell -noinput"
+
 # install build dependencies
 RUN apt-get update \
   && apt-get install -y --no-install-recommends build-essential git \

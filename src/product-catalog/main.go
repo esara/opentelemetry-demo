@@ -190,9 +190,25 @@ func main() {
 	logger.Info("Product Catalog gRPC server stopped")
 }
 
+func runBenchmarkSlowQuery(ctx context.Context, queryPath string) error {
+	if db == nil {
+		return fmt.Errorf("database connection not initialized")
+	}
+
+	logger.Warn("benchmark slow-query scenario active for product-catalog", slog.String("query_path", queryPath))
+	if _, err := db.ExecContext(ctx, `SELECT pg_sleep(0.75)`); err != nil {
+		return fmt.Errorf("failed to inject benchmark slow-query delay: %w", err)
+	}
+	return nil
+}
+
 func loadProductsFromDB(ctx context.Context) ([]*pb.Product, error) {
 	if db == nil {
 		return nil, fmt.Errorf("database connection not initialized")
+	}
+
+	if err := runBenchmarkSlowQuery(ctx, "loadProductsFromDB"); err != nil {
+		return nil, err
 	}
 
 	// Query all products with categories
@@ -222,6 +238,11 @@ func searchProductsFromDB(ctx context.Context, query string) ([]*pb.Product, err
 
 	// Query products matching search query in name or description
 	searchPattern := "%" + strings.ToLower(query) + "%"
+
+	if err := runBenchmarkSlowQuery(ctx, "searchProductsFromDB"); err != nil {
+		return nil, err
+	}
+
 	rows, err := db.QueryContext(ctx, `
 		SELECT p.id, p.name, p.description, p.picture, 
 		       p.price_currency_code, p.price_units, p.price_nanos, p.categories
@@ -245,6 +266,10 @@ func searchProductsFromDB(ctx context.Context, query string) ([]*pb.Product, err
 func getProductFromDB(ctx context.Context, productID string) (*pb.Product, error) {
 	if db == nil {
 		return nil, fmt.Errorf("database connection not initialized")
+	}
+
+	if err := runBenchmarkSlowQuery(ctx, "getProductFromDB"); err != nil {
+		return nil, err
 	}
 
 	// Query single product by ID
