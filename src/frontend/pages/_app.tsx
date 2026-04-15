@@ -4,6 +4,7 @@
 import '../styles/globals.css';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import App, { AppContext, AppProps } from 'next/app';
+import Script from 'next/script';
 import CurrencyProvider from '../providers/Currency.provider';
 import CartProvider from '../providers/Cart.provider';
 import { ThemeProvider } from 'styled-components';
@@ -61,6 +62,10 @@ const queryClient = new QueryClient();
 function MyApp({ Component, pageProps }: AppProps) {
   return (
     <ThemeProvider theme={Theme}>
+      <Script
+        src="https://cdn.quantummetric.com/qscripts/quantum-causely.js"
+        strategy="afterInteractive"
+      />
       <OpenFeatureProvider>
         <QueryClientProvider client={queryClient}>
           <CurrencyProvider>

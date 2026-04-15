@@ -16,6 +16,12 @@
 #
 FROM docker.io/hexpm/elixir:1.20.1-erlang-28.4-debian-bullseye-20260610-slim@sha256:ec29c781c91c98bd0d887fa5c41e75bd1b6ced83fc4a695af3371a577e500d58 AS base
 
+# Headless build (no TTY) + QEMU cross-build: JIT needs +JPperf true or BEAM often crashes.
+ENV MIX_NO_TTY=1 \
+    CI=true \
+    ERL_FLAGS="+JPperf true" \
+    ERL_AFLAGS="-noshell -noinput"
+
 # install build dependencies
 RUN apt-get update \
   && apt-get install -y --no-install-recommends build-essential git \

@@ -4,10 +4,6 @@ const { context, propagation, trace, metrics, SpanStatusCode } = require('@opent
 const cardValidator = require('simple-card-validator');
 const { v4: uuidv4 } = require('uuid');
 
-const { OpenFeature } = require('@openfeature/server-sdk');
-const { FlagdProvider } = require('@openfeature/flagd-provider');
-const flagProvider = new FlagdProvider();
-
 const logger = require('./logger');
 const tracer = trace.getTracer('payment');
 const meter = metrics.getMeter('payment');
@@ -16,6 +12,26 @@ const transactionsCounter = meter.createCounter('demo.payment.transactions', {
 });
 
 const LOYALTY_LEVEL = ['platinum', 'gold', 'silver', 'bronze'];
+
+// SC2 BUG: threshold was zeroed out during a config refactor (should be 0.8).
+// Every transaction score exceeds 0.0, so every charge is rejected.
+const FRAUD_RISK_THRESHOLD = 0.0;
+
+/**
+ * Inline fraud risk scoring against a static threshold.
+ * BUG: FRAUD_RISK_THRESHOLD is 0.0 instead of 0.8 — rejects every transaction.
+ */
+async function runFraudCheck(transactionId) {
+  const riskScore = Math.random() * 0.6;
+  if (riskScore > FRAUD_RISK_THRESHOLD) {
+    logger.error(
+      { transactionId, riskScore: riskScore.toFixed(3), threshold: FRAUD_RISK_THRESHOLD },
+      'SC2 fraud check rejected transaction: risk score exceeds threshold'
+    );
+    throw new Error(`transaction rejected by fraud check: score ${riskScore.toFixed(3)} exceeds threshold ${FRAUD_RISK_THRESHOLD}`);
+  }
+  return { riskScore };
+}
 
 /** Return random element from given array */
 function random(arr) {
@@ -26,25 +42,16 @@ function random(arr) {
 module.exports.charge = async request => {
   const span = tracer.startSpan('charge');
 
+  // Benchmark SC2: flagd/OpenFeature evaluation disabled — keeps the injected
+  // image focused on the fraud-check misconfiguration and avoids unrelated
+  // EventStream noise from the demo's feature-flag plumbing.
+
   try {
     const baggage = propagation.getBaggage(context.active());
     const syntheticRequest = baggage?.getEntry('synthetic_request')?.value === 'true';
 
     if (syntheticRequest) {
       span.setAttribute('user_agent.synthetic.type', 'test');
-    }
-
-    await OpenFeature.setProviderAndWait(flagProvider);
-
-    const numberVariant = await OpenFeature.getClient().getNumberValue("paymentFailure", 0);
-
-    if (numberVariant > 0) {
-      // n% chance to fail with demo.user_context.loyalty_level=gold
-      if (Math.random() < numberVariant) {
-        span.setAttributes({'demo.user_context.loyalty_level': 'gold' });
-
-        throw new Error('Payment request failed. Invalid token. demo.user_context.loyalty_level=gold');
-      }
     }
 
     const {
@@ -90,6 +97,14 @@ module.exports.charge = async request => {
     const enduserId = baggage?.getEntry('enduser.id')?.value;
     if (enduserId) {
       span.setAttribute('enduser.id', enduserId);
+    }
+
+    try {
+      await runFraudCheck(transactionId);
+    } catch (err) {
+      span.recordException(err);
+      span.end();
+      throw err;
     }
 
     const { units, nanos, currencyCode } = request.amount;
